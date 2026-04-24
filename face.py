@@ -35,11 +35,27 @@ def detect_faces(img: torch.Tensor) -> List[List[float]]:
     Numpy and cv2 are not allowed, except for face recognition API where the API returns plain python Lists, convert them to torch.Tensor.
     
     """
-    detection_results: List[List[float]] = []
-
     ##### YOUR IMPLEMENTATION STARTS HERE #####
+    imgNUMPY = img.permute(1, 2, 0).contiguous().cpu().numpy().copy()
+    '''print("----------------------------")
+    print(type(imgNUMPY))
+    print(imgNUMPY.shape)
+    print(imgNUMPY.dtype)
+    print(type(imgNUMPY[0,0,0]))
+    print(imgNUMPY.flags)
+    print(imgNUMPY.min(), imgNUMPY.max())
+    print("----------------------------")'''
+    faceLocations = face_recognition.face_locations(imgNUMPY)
 
-    return detection_results
+    retFaces = []
+    for face in faceLocations:
+        x = float(face[3])
+        y = float(face[0])
+        w = float(face[1] - face[3])
+        h = float(face[2] - face[0])
+        newFace = [x,y,w,h]
+        retFaces.append(newFace)
+    return retFaces
 
 
 
@@ -61,13 +77,70 @@ def cluster_faces(imgs: Dict[str, torch.Tensor], K: int) -> List[List[str]]:
     Torch info: All intermediate data structures should use torch data structures or objects. 
     Numpy and cv2 are not allowed, except for face recognition API where the API returns plain python Lists, convert them to torch.Tensor.
     
-    """
-    cluster_results: List[List[str]] = [[] for _ in range(K)] # Please make sure your output follows this data format.
-        
+    """        
     ##### YOUR IMPLEMENTATION STARTS HERE #####
-    
-    return cluster_results
+    names = []
+    encodings = []
+    for img in imgs:
+        imgNUMPY = imgs[img].permute(1, 2, 0).contiguous().cpu().numpy().copy()
+        faceLocation = face_recognition.face_locations(imgNUMPY)
+        encoding = face_recognition.face_encodings(imgNUMPY,faceLocation)[0]
+        encoding = torch.tensor(encoding,dtype=torch.float32)
 
+        encoding = encoding / torch.norm(encoding) #normalizing for better results hopefully (IT worked lets fricken go)
+
+        names.append(img)
+        encodings.append(encoding)
+    
+
+    randomIndices = torch.randperm(len(encodings))[:K]
+    stackedEncodings = torch.stack(encodings)
+    centroids = stackedEncodings[randomIndices]
+
+    maxIterations = 5000
+    for _ in range(maxIterations):
+        groupings = []
+        for _ in range(K):
+            groupings.append([])
+
+        for encoding in encodings:
+            minDist = (-1,float('inf'))
+            for i, centroid in enumerate(centroids):
+                dist = torch.norm(encoding - centroid)
+                if dist < minDist[1]:
+                    minDist = (i,dist)
+            groupings[minDist[0]].append(encoding)
+
+        newCentroids = []
+        movementOfCentroids = 0
+        for i, grouping in enumerate(groupings):
+            if len(grouping) != 0:
+                newCentroids.append(torch.mean(torch.stack(grouping), dim=0))
+            else:
+                newCentroids.append(centroids[i])
+            movementOfCentroids += torch.norm(centroids[i] - newCentroids[i])
+
+        newCentroids = torch.stack(newCentroids)
+        threshold = 1e-4
+        if movementOfCentroids < threshold:
+            centroids = newCentroids
+            break
+        else:
+            centroids = newCentroids
+
+    clusters = []
+    for i in range(K):
+        clusters.append([])
+
+    for i, encoding in enumerate(encodings):
+        minDist = (-1,float('inf'))
+        for j, centroid in enumerate(centroids):
+            dist = torch.norm(encoding - centroid)
+            if dist < minDist[1]:
+                minDist = (j,dist)
+        clusters[minDist[0]].append(names[i])
+
+    return clusters
 
 '''
 If your implementation requires multiple functions. Please implement all the functions you design under here.
